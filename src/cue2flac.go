@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	
-	"example.com/parsecue"
+	"github.com/olde-ducke/cue2flac/src/parsecue"
 )
 
 func errorCheck(err error) {
