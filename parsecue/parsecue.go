@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+type Data struct {
+	Album	map[string]string
+	Track []map[string]string
+}
+
 func extractData(input string, i int, f bool) string {
 	input = strings.ReplaceAll(input, "\"", "")
 	buf := strings.Fields(input)
@@ -19,12 +24,14 @@ func extractData(input string, i int, f bool) string {
 	return strings.Join(buf[i:], " ")
 }
 
+// converts timestamp from mm:ss:ff to mm:ss.ms
 func convertTime(input string) (string, error) {
 	buf := strings.Fields(input)
 	// assuming that wiki is right, and format is always:
 	// INDEX <number> <mm:ss:ff> convert frames to ms for ffmpeg
 	// take last part of input line (time code) and split it
 	buf = strings.Split(buf[2], ":")
+	// returns int 0 if there is an error, so we may proceed anyway
 	i, err := strconv.Atoi(buf[2])
 	// not dealing with floating point
 	i = i * 1_000_000 / 75_000
@@ -40,25 +47,25 @@ func convertTime(input string) (string, error) {
 
 // returns mapped metadata found in cue sheet for album and
 // individual tracks
-func ParseCue() (map[string]string, []map[string]string, error) {
-	// Glob expects it's own pattern as input, not regex
+func ParseCue() (*Data, error) {
+	// find *.cue files in current dir TODO: setting path from caller?
 	matches, err := filepath.Glob(`*.[cC][uU][eE]`)
 	// apparently doesn't throw any errors, except "bad pattern"
 	if matches == nil {
-		return nil, nil, errors.New("no cue sheet file found")
+		return nil, errors.New("no cue sheet file found")
 	}
 	
 	// TODO: for now only first cue sheet file is parsed
 	file, err := os.Open(matches[0])
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer file.Close()
 	
-	albumData := make(map[string]string)
-	var trackData []map[string]string
-	tempData := make(map[string]string)
-	// set album flag to differentiate between sections
+	// start parsing metadata
+	data := &Data{Album: make(map[string]string)}
+	bufData := make(map[string]string)
+	// album variable is used to differentiate between sections
 	scanner, album := bufio.NewScanner(file), true
 	// scanner will error with lines longer than 65536
 	// characters, if line length is greater than 64K,
@@ -67,80 +74,75 @@ func ParseCue() (map[string]string, []map[string]string, error) {
 	for scanner.Scan() {
 		currentLine := scanner.Text()
 		
-		// invert album flag when first audio track is
-		// encountered album metadata SHOULD be over
+		// invert album flag when first audio track is encountered
 		if album {
 			album = !strings.Contains(currentLine,
 										  "AUDIO")
 		}
 		// TODO: there are more tags than listed below
-		// SONGWRITER or whatever, for example,
-		// pregap is ignored entirely
+		// SONGWRITER for example
 		switch {
 		// TODO: figure out better cue-metadata key combination
 
 		// should only encounter these in album section
 		case strings.Contains(currentLine, "FILE"):
-			albumData["file"] = extractData(currentLine,
+			data.Album["file"] = extractData(currentLine,
 											1, true) 
 		case strings.Contains(currentLine, "REM GENRE"):
-			albumData["genre"] = extractData(currentLine,
+			data.Album["genre"] = extractData(currentLine,
 												 2, false)
 		case strings.Contains(currentLine, "REM DATE"):
-			albumData["date"] = extractData(currentLine,
+			data.Album["date"] = extractData(currentLine,
 												2, false)
 		/* ignore this tag for now
 		case strings.Contains(currentLine, "REM DISCID"):
-			albumData["compilation"] = extractData(currentLine,
+			data.Album["compilation"] = extractData(currentLine,
 												  2, false)
 		*/
 		case strings.Contains(currentLine, "REM COMMENT"):
-			albumData["comment"] = extractData(currentLine, 2, false)
+			data.Album["comment"] = extractData(currentLine, 2, false)
 		
 		// same for both, album and tracks
 		case strings.Contains(currentLine, "TITLE"):
 			if album {
-				albumData["album"] = extractData(currentLine, 1, false)
+				data.Album["album"] = extractData(currentLine, 1, false)
 			} else {
-				tempData["title"] = extractData(currentLine, 1, false)
+				bufData["title"] = extractData(currentLine, 1, false)
 			}
 		case strings.Contains(currentLine, "PERFORMER"):
 			if album {
-				albumData["album_artist"] = 
+				data.Album["album_artist"] = 
 							extractData(currentLine, 1, false)
 			} else {
-				tempData["artist"] = extractData(currentLine, 1, false)
+				bufData["artist"] = extractData(currentLine, 1, false)
 			}
 		
-		// should only encounter these in track section, same
-		// goes for AUDIO
-		// section INDEX 01 should be last (ignoring postgap)?
+		// should only encounter these in track section
 		case strings.Contains(currentLine, "TRACK"):
-			tempData["track"] = extractData(currentLine,
+			bufData["track"] = extractData(currentLine,
 											1, true)
 		case strings.Contains(currentLine, "INDEX 01"):
-			tempData["start"], err = convertTime(currentLine)
+			bufData["start"], err = convertTime(currentLine)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			// add collected metadata to tracks map
 			// and clear buffer map
-			trackData = append(trackData, tempData)
-			tempData = make(map[string]string)
+			data.Track = append(data.Track, bufData)
+			bufData = make(map[string]string)
 		}
 	}
-
 	err = scanner.Err()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	
+
 	if album {
-		return nil, nil, errors.New("no audio tracks found in cue sheet")
+		return nil, errors.New("no audio tracks found in cue sheet")
 	}
-	
-	albumData["tracktotal"] = strconv.Itoa(len(trackData))
-	
-	return albumData, trackData, nil
+
+	data.Album["tracktotal"] = strconv.Itoa(len(data.Track))
+
+	return data, nil
 }
 

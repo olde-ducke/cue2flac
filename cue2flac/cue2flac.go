@@ -17,7 +17,7 @@ func errorCheck(err error) {
 }
 
 func main() {
-	album, tracks, err := parsecue.ParseCue()
+	data, err := parsecue.ParseCue()
 	errorCheck(err)
 
 	// since album name can contain illegal characters, it's better to get rid of them
@@ -31,36 +31,35 @@ func main() {
 									"|",  "",
 									"?",  "",
 									"*",  "")
-	outputFolder := strings.Join([]string{album["date"], "-", replacer.Replace(album["album"])}, " ")
+	outputFolder := strings.Join([]string{data.Album["date"], "-", replacer.Replace(data.Album["album"])}, " ")
 	err = os.Mkdir(outputFolder, os.ModePerm)
-	log.Printf("output folder: %s%s", string(os.PathSeparator), outputFolder)
 	errorCheck(err)
 	
 	// collecting ffmpeg arguments for each track
-	for i, _ := range tracks {
+	for i, _ := range data.Track {
 		// ffmpeg options
-		args := []string{"-i", album["file"]}
+		args := []string{"-i", data.Album["file"]}
 		if i != 0 {
-			args = append(args, "-ss", tracks[i]["start"])
+			args = append(args, "-ss", data.Track[i]["start"])
 		}
-		if i != len(tracks) - 1 {
-			args = append(args, "-to", tracks[i + 1]["start"])
+		if i != len(data.Track) - 1 {
+			args = append(args, "-to", data.Track[i + 1]["start"])
 		}
 		
 		// add album and track metadata to ffmpeg command
-		for k, v := range album {
+		for k, v := range data.Album {
 			if k == "file" { continue }
 			args = append(args, "-metadata", fmt.Sprintf("%s=%s", k, v))
 		}
-		for k, v := range tracks[i] {
+		for k, v := range data.Track[i] {
 			if k == "start" { continue }
 			args = append(args, "-metadata", fmt.Sprintf("%s=%s", k, v))
 		}
 		
 		// file name, same as album name above - can contain illegal characters
 		var b strings.Builder
-		fmt.Fprint(&b , outputFolder, string(os.PathSeparator), tracks[i]["track"], " - ",
-					replacer.Replace(tracks[i]["title"]), ".flac" )
+		fmt.Fprint(&b , outputFolder, string(os.PathSeparator), data.Track[i]["track"], " - ",
+					replacer.Replace(data.Track[i]["title"]), ".flac" )
 		args = append(args, b.String())
 		cmd := exec.Command("ffmpeg", args...)
 		err := cmd.Run()
